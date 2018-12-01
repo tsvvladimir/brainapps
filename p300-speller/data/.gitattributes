@@ -1,0 +1,7 @@
+classifier.pickle filter=lfs diff=lfs merge=lfs -text
+eeg.csv filter=lfs diff=lfs merge=lfs -text
+eeg_test.csv filter=lfs diff=lfs merge=lfs -text
+events.csv filter=lfs diff=lfs merge=lfs -text
+events_test.csv filter=lfs diff=lfs merge=lfs -text
+pca.pickle filter=lfs diff=lfs merge=lfs -text
+scaler.pickle filter=lfs diff=lfs merge=lfs -text
