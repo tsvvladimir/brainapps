@@ -28,17 +28,6 @@ def load_data (eeg_file, event_file):
     event_data.index.name = 'index'
     return eeg_data, event_data
 
-def split_event_data_by_trials (event_data, settings):
-    """Split entire events file by trials"""
-    num_cols = settings['general']['num_cols']
-    seq_per_trial = settings['training_params']['seq_per_trial']
-    events_per_character = seq_per_trial * (num_cols + num_cols) # square matrix
-    results = list ()
-
-    for i in range (event_data.shape[0]//events_per_character):
-        results.append (event_data.iloc[i * events_per_character: (i + 1) * events_per_character])
-    return results
-
 def get_data_from_event (eeg_data, event_timestamp, settings):
     """Get data associated with event"""
     first_point = event_timestamp + settings['general']['eeg_delay'] / 1000.0
@@ -70,21 +59,46 @@ def calculate_wavelet (eeg_data):
 def prepare_data (eeg_data, event_data, settings, training = True):
     """Prepare data for classification"""
     data = list ()
+    columns = [x for x in eeg_data.columns.values if x.startswith ('eeg')]
+    logging.debug ('eeg columns %s' % ' '.join (columns))
+
+    if training:
+        seq_per_trial = settings['training_params']['seq_per_trial']
+    else:
+        seq_per_trial = settings['live_params']['seq_per_trial']
+
     for index, event in event_data.iterrows ():
+        # get data chunk to speed up get_data_from_event
+        if index % (settings['general']['num_cols'] * 2 * seq_per_trial) == 0:
+            logging.debug ('normalizing, index: %d' % index)
+            # find start and stop time
+            start_time = event['event_start_time']
+            stop_time = event_data.iloc[[index + settings['general']['num_cols'] * 2 * seq_per_trial - 1]]['event_start_time'] + settings['general']['eeg_end'] / 1000.0
+            if settings['general']['board'] == 'Cython':
+                num_datapoints = int (CYTHON.fs_hz * (stop_time - start_time))
+            else:
+                raise ValueError ('invalid board')
+            logging.debug ('start_time:%f stop_time:%f diff: %f' % (start_time, stop_time, stop_time - start_time))
+            eeg_data_chunk = eeg_data[eeg_data['timestamp'] > start_time].groupby ('index', as_index = False).first ()
+            num_datapoints = min (num_datapoints, eeg_data_chunk.shape[0])
+            logging.debug ('num_datapoints: %d' % num_datapoints)
+            eeg_data_chunk = eeg_data_chunk.iloc[0:num_datapoints]
+            eeg_data_chunk.index.name = 'index'
+        
         if training:
             if (event['orientation'] == 'col' and (event['highlighted']) == event['trial_col'])\
             or (event['orientation'] == 'row' and (event['highlighted']) == event['trial_row']):
                 target = 1
             else:
                 target = 0
-        event_eeg_data = get_data_from_event (eeg_data, event['event_start_time'], settings)
+        event_eeg_data = get_data_from_event (eeg_data_chunk, event['event_start_time'], settings)
         if event_eeg_data is None:
             break
         event_eeg_data = event_eeg_data.select (lambda col: col.startswith ('eeg') and col not in ('eeg1', 'eeg2'), axis = 1)
-        event_data = event_eeg_data.values.flatten ().tolist ()
+        event_eeg_data = event_eeg_data.values.flatten ().tolist ()
         if training:
-            event_data.append (target)
-        data.append (event_data)
+            event_eeg_data.append (target)
+        data.append (event_eeg_data)
 
     data_df = pd.DataFrame (data)
     if training:
@@ -169,6 +183,7 @@ def test_fair (settings):
         start_index = i * settings['training_params']['seq_per_trial'] * settings['general']['num_cols'] * 2
         stop_index = (i + 1) * settings['training_params']['seq_per_trial'] * settings['general']['num_cols'] * 2
         current_event_data = event_data.iloc[start_index:stop_index]
+        current_event_data.index = range (len (current_event_data.index))
         right_col = event_data['trial_col'].values[start_index]
         right_row = event_data['trial_row'].values[start_index]
 
@@ -235,8 +250,13 @@ def main ():
     parser.add_argument ('--settings', type = str, help  = 'settings file', default = 'ui_settings.yml')
     parser.add_argument ('--reuse', action = 'store_true')
     parser.add_argument ('--test', action = 'store_true')
+    parser.add_argument ('--debug', action = 'store_true')
     args = parser.parse_args ()
-    logging.basicConfig (level = logging.DEBUG)
+    if args.debug:
+        log_level = logging.DEBUG
+    else:
+        log_level = logging.INFO
+    logging.basicConfig (level = log_level)
 
     settings = yaml.load (open (args.settings))
     if args.test:
