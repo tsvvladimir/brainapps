@@ -36,9 +36,8 @@ training_params:
 
 live_params:
   seq_per_trial: 15
-  max_repeat: 3
+  max_repeat: 2
   stop_thresh: 0.2
 
 calib_params:
   word: "brainflow"
-  seq_per_trial: 15

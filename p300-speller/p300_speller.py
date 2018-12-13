@@ -17,76 +17,14 @@ import pickle
 import logging
 
 from brainflow import *
+
 import classifier
-
-
-class StartScreen (tk.Frame):
-    """Starting screen for the application"""
-    def __init__ (self, master, next_screen):
-        tk.Frame.__init__ (self, master)
-        training_instructions = ('1) A character will be highlighted at the\n'
-                        'beginning of each trial\n\n'
-                        '2) Fixate on the character\n\n'
-                        '3) Rows and columns will begin to flash\n\n'
-                        '3) Continue to fixate on the character until\n'
-                        'another character is highlighted\n')
-
-        live_instructions = ('1) Fixate on the character you wish to select\n\n'
-                    '2) A character will be predicted and types after\n'
-                    'a set amount of rounds\n')
-
-        self.title_text = tk.Label (self, text = "Brainflow P300 Speller", font = ('Arial', 24))
-        self.title_text.grid ()
-
-        self.directions_label = tk.Label (self, text = 'Directions:', font = ('Arial', 18))
-        self.directions_label.grid (sticky = tk.W)
-
-        self.training_label = tk.Label(self, text = 'Training:', font = ('Arial', 16))
-        self.training_label.grid (sticky = tk.W)
-
-        self.training_text = tk.Label (self, text = training_instructions, font = ('Arial', 14), justify = LEFT)
-        self.training_text.grid (sticky = tk.W)
-
-        self.live_label = tk.Label (self, text = 'Live Spelling:', font = ('Arial', 16))
-        self.live_label.grid (sticky = tk.W)
-
-        self.live_text = tk.Label (self, text = live_instructions, font = ('Arial', 14), justify = LEFT)
-        self.live_text.grid (sticky = tk.W)
-
-        self.start_training_button = tk.Button (self, command = self.start_training, text = 'Train', font = ('Arial', 24, 'bold'), height = 4, width = 24)
-        self.start_training_button.grid (pady = 3, sticky = tk.W + tk.E)
-
-        self.start_live_button = tk.Button (self, command = self.start_live, text = 'Live', font = ('Arial', 24, 'bold'), height = 4, width = 24)
-        self.start_live_button.grid (pady = 3, sticky = tk.W + tk.E)
-
-        self.next_screen = next_screen
-
-    def display_screen (self):
-        """Adds this screen to the window"""
-        self.place (relx = 0.5, rely = 0.5, anchor = CENTER)
-
-    def remove_screen (self):
-        """Removes this screen from the window"""
-        self.place_forget ()
-
-    def start_training (self):
-        self.next_screen.set_training_mode (True)
-        self.__start_speller ()
-
-    def start_live (self):
-        self.next_screen.set_training_mode (False)
-        self.__start_speller ()
-
-    def __start_speller (self):
-        """Removes this frame and displays the grid of characters"""
-        self.next_screen.display_screen ()
-        self.next_screen.update ()
-        self.remove_screen ()
+from ui_helpers import StartScreen, SelectionRectangle
 
 
 class P300GUI (tk.Frame):
     """The main screen of the application that displays the character grid and spelling buffer"""
-    def __init__ (self, master, settings):
+    def __init__ (self, master, settings, perform_calibration = False):
         tk.Frame.__init__ (self, master)
         # df to store events
         self.event_data = pd.DataFrame (columns = ['event_start_time', 'orientation', 'highlighted', 'trial_row', 'trial_col'])
@@ -107,6 +45,13 @@ class P300GUI (tk.Frame):
         self.trial_row = -1
         self.trial_col = -1
         self.trial_count = 0
+        # for some cases it may be usefull to perform calibration before live mode, but current implementation doesn't use it
+        # always enabled in training mode 
+        self.perform_calibration = perform_calibration
+        self.calibration_completed = False
+        
+        self.untrained_chars = range (self.num_cols * self.num_cols)
+        self.training_sequence = list ()
         self.sequence_count = 0
         self.trial_in_progress = False
         self.char_highlighted = False
@@ -128,6 +73,21 @@ class P300GUI (tk.Frame):
 
     def set_training_mode (self, is_training):
         self.is_training = is_training
+        if self.is_training:
+            self.perform_calibration = True
+        if self.perform_calibration:
+            self.training_sequence += [x.upper () for x in self.settings['calib_params']['word']]
+        if is_training:
+            for i in range (self.settings['training_params']['num_trials']):
+                rand_index = random.randint (0, len (self.untrained_chars) - 1)
+                char_num = self.untrained_chars[rand_index]
+                row = char_num // self.num_cols
+                col = char_num % self.num_cols
+                self.untrained_chars.remove (self.untrained_chars[rand_index])
+                self.training_sequence.append (self.get_character (row, col))
+        if self.training_sequence:
+            logging.debug ('training sequence: %s' % ' '.join ([x for x in self.training_sequence]))
+
         if not self.is_training:
             with open (os.path.join (os.path.dirname (os.path.realpath (__file__)), 'data', self.settings['general']['scaler']), 'rb') as f:
                 self.scaler = pickle.load (f)
@@ -157,16 +117,29 @@ class P300GUI (tk.Frame):
             self.is_streaming = True
         # Moves the selection rect off-screen
         self.selection_rect.move_to_col (-2)
-        if self.is_training:
+        if self.training_sequence:
             self.training_update ()
         else:
-            self.live_update ()
+            if self.is_training:
+                self.write_and_exit ()
+            else:
+                if not self.calibration_completed:
+                    self.spelled_text.set ('Your text:')
+                    self.calibration_completed = True
+                    if self.perform_calibration:
+                        self.master.after (self.settings['training_params']['wait_timeout'], self.update)
+                    else:
+                        self.draw_characters ()
+                        self.master.after (self.settings['training_params']['wait_timeout'] // 2, self.update)
+                else:
+                    self.live_update ()
 
     def training_update (self):
         """Updates the gui while in training mode"""
         # Highlight the character when we are currently not in the middle of a trial
         if not self.trial_in_progress:
-            self.get_training_character ()
+            character = self.training_sequence[0]
+            self.trial_row, self.trial_col = self.get_row_col (character)
             # Move the char highlight rect behind the character
             self.char_select_rect.move_to_col (self.trial_col, reset_top = False)
             self.char_select_rect.move_to_row (self.trial_row, reset_left = False)
@@ -206,10 +179,10 @@ class P300GUI (tk.Frame):
                         self.trial_count = self.trial_count + 1
                         self.sequence_count = 0
                         self.trial_in_progress = False
-                        if self.trial_count >= self.settings['training_params']['num_trials']:
-                            self.write_and_exit ()
-                        else:
-                            self.master.after (self.settings['general']['epoch_length'] + self.intermediate_time, self.update)
+                        self.training_sequence.pop (0)
+                        if self.trial_count == len (self.settings['calib_params']['word']) and self.perform_calibration:
+                            self.calibration_completed = True
+                        self.master.after (self.settings['general']['epoch_length'] + self.intermediate_time, self.update)
                     else:
                         self.master.after (self.settings['general']['epoch_length'] + self.intermediate_time, self.update)
                 else:
@@ -262,11 +235,20 @@ class P300GUI (tk.Frame):
         self.cols_predictions = numpy.zeros (self.settings['general']['num_cols']).astype (numpy.int64)
         self.rows_predictions = numpy.zeros (self.settings['general']['num_cols']).astype (numpy.int64)
 
+    def get_row_col (self, character):
+        if character.isdigit ():
+            cell_num = 26 + int (character)
+        else:
+            cell_num = ord (character.upper ()) - ord ('A')
+        row = cell_num // self.num_cols
+        col = cell_num % self.num_cols
+        return row, col
+
     def get_character (self, row, col):
         """Returns the character from the grid at the given row and column"""
         cell_num = (row * self.num_cols) + col
         if cell_num <= 25:
-            return chr (65 + cell_num)
+            return chr (ord ('A') + cell_num)
         else:
             return str (cell_num - 26)
 
@@ -323,18 +305,22 @@ class P300GUI (tk.Frame):
                 # Get the current cell character
                 cell_char = chr (ascii_offset + current_offset)
                 current_offset =  current_offset + 1
-                canvas_id = self.canvas.create_text ((self.col_width * col) + (self.col_width / 2.5),
-                                                    (row_height * row) + (row_height / 3),
-                                                    font = ('Arial', (self.col_width / 4), 'bold'),
-                                                    anchor = 'nw')
 
                 # Determine if this character is printed white or black
                 if self.selection_rect != None:
                     if ((self.selection_rect.is_vertical () and col == self.selection_rect.get_index ()
                          or not self.selection_rect.is_vertical () and row == self.selection_rect.get_index ())
                          and self.selection_rect.visible):
+                        canvas_id = self.canvas.create_text ((self.col_width * col) + (self.col_width / 2.5),
+                                                    (row_height * row) + (row_height / 3),
+                                                    font = ('Arial', (int (self.col_width / 3.5)), 'bold'),
+                                                    anchor = 'nw')
                         self.canvas.itemconfig (canvas_id, text = cell_char, fill = self.settings['presentation']['highlight_char_color'])
                     else:
+                        canvas_id = self.canvas.create_text ((self.col_width * col) + (self.col_width / 2.5),
+                                                    (row_height * row) + (row_height / 3),
+                                                    font = ('Arial', (self.col_width / 4), 'bold'),
+                                                    anchor = 'nw')
                         self.canvas.itemconfig (canvas_id, text = cell_char, fill = self.settings['presentation']['default_char_color'])
 
     def add_space (self):
@@ -353,7 +339,7 @@ class P300GUI (tk.Frame):
         self.spelled_text.set (self.spelled_text.get () + text)
         self.text_buffer.icursor (len (self.spelled_text.get ()))
 
-    def create_widgets(self):
+    def create_widgets (self):
         """Populates the gui with all the necessary components"""
         self.master['bg'] = '#001c33'
         self['bg'] = '#001c33'
@@ -379,12 +365,6 @@ class P300GUI (tk.Frame):
         self.exit_button = tk.Button (self.bottom_button_pane, text = 'exit', command = self.write_and_exit, height = 1, width = 6)
         self.exit_button.grid (row = 0,column = 3)
 
-    def get_training_character (self):
-        """Set new training character"""
-        self.trial_col = (self.trial_col + 1) % self.num_cols
-        if self.trial_col == 0:
-            self.trial_row = (self.trial_row + 1) % self.num_cols
-
     def record_event (self):
         """Sends epoch event codes and times to the main process"""
         index = self.selection_rect.get_index ()
@@ -392,15 +372,21 @@ class P300GUI (tk.Frame):
             orientation = 'col'
         else:
             orientation = 'row'
-        if self.is_training:
-            self.event_data = self.event_data.append ({'event_start_time' : time.time (), 'orientation' : orientation, 'highlighted':index,
-                                                        'trial_row': self.trial_row, 'trial_col' : self.trial_col}, ignore_index = True)
+        if self.perform_calibration and not self.calibration_completed:
+            calibration = 1
         else:
-            self.event_data = self.event_data.append ({'event_start_time' : time.time (), 'orientation' : orientation, 'highlighted':index}, ignore_index = True)
+            calibration = 0
+        if self.is_training or (self.perform_calibration and not self.calibration_completed):
+            self.event_data = self.event_data.append ({'event_start_time' : time.time (), 'orientation' : orientation, 'highlighted':index,
+                                                        'trial_row': self.trial_row, 'trial_col' : self.trial_col, 'calibration': calibration}, ignore_index = True)
+        else:
+            self.event_data = self.event_data.append ({'event_start_time' : time.time (), 'orientation' : orientation, 'highlighted':index,
+                                                        'trial_row': -1, 'trial_col' : -1, 'calibration': -1}, ignore_index = True)
 
     def write_and_exit (self):
         if self.is_training:
-            event_file = os.path.join (os.path.dirname (os.path.abspath (__file__)), 'data', 'events.csv')
+            time_created = int (time.time ())
+            event_file = os.path.join (os.path.dirname (os.path.abspath (__file__)), 'data', 'events_%d.csv' % time_created)
             if os.path.isfile (event_file):
                 self.event_data.to_csv (event_file, mode = 'a', header = False, index = False)
             else:
@@ -408,7 +394,7 @@ class P300GUI (tk.Frame):
 
             data = self.board.get_board_data ()
             data_handler = DataHandler (self.board_id, numpy_data = data)
-            data_handler.save_csv (os.path.join (os.path.dirname (os.path.abspath (__file__)), 'data', 'eeg.csv'))
+            data_handler.save_csv (os.path.join (os.path.dirname (os.path.abspath (__file__)), 'data', 'eeg_%d.csv' % time_created))
         self.master.quit ()
 
     def get_predicted (self):
@@ -423,7 +409,8 @@ class P300GUI (tk.Frame):
 
         data_x, _ = classifier.prepare_data (eeg_data, self.event_data, self.settings, False)
         if data_x.shape[0] != self.settings['live_params']['seq_per_trial'] * self.settings['general']['num_cols'] * 2:
-            logging.error ('Incorrect data shape')
+            logging.error ('Incorrect data shape:%d, exptected:%d' % (data_x.shape[0], 
+                self.settings['live_params']['seq_per_trial'] * self.settings['general']['num_cols'] * 2))
         decisions = classifier.get_decison (data_x, self.scaler, self.pca, self.classifier)
 
         for i, decision in enumerate (decisions):
@@ -463,10 +450,9 @@ class P300GUI (tk.Frame):
                 max_row_predictions = self.rows_predictions[i]
                 max_row_decision = self.rows_weights[i]
 
-
         second_col_score = sorted (self.cols_predictions.tolist ())[-2]
         second_row_score = sorted (self.rows_predictions.tolist ())[-2]
-        if self.current_live_count < 3:
+        if self.current_live_count < self.settings['live_params']['max_repeat']:
             if best_col_id is not None:
                 val = self.cols_predictions[best_col_id]
                 if ((float (val - second_col_score)) / val < self.settings['live_params']['stop_thresh']):
@@ -481,157 +467,23 @@ class P300GUI (tk.Frame):
                 if val < 2:
                     best_row_id = None
 
-        logging.debug ('predicted cols %s' % ' '.join ([str (x) for x in self.cols_predictions]))
-        logging.debug ('predicted rows %s' % ' '.join ([str (x) for x in self.rows_predictions]))
-        logging.debug ('predicted col: %s predicted row:%s' % (str (best_col_id), str (best_row_id)))
+        logging.info ('predicted cols %s' % ' '.join ([str (x) for x in self.cols_predictions]))
+        logging.info ('predicted rows %s' % ' '.join ([str (x) for x in self.rows_predictions]))
+        logging.info ('predicted col: %s predicted row:%s' % (str (best_col_id), str (best_row_id)))
         return best_row_id, best_col_id
 
 
-class SelectionRectangle ():
-    """Manages the rectangle that highlights the characters in the grid"""
-    def __init__ (self, settings, x, y, length, width, max_x, max_y, color = '#ffffff'):
-        self.settings = settings
-        # x,y - top left position
-        self.x = x
-        self.y = y
-        self.length = length
-        self.width = width
-        self.graphic_ref = None
-        self.color = color
-        self.max_x = max_x
-        self.max_y = max_y
-        self.remaining_rows = range (6)
-        self.remaining_cols = range (6)
-        self.visible = True
-
-    def get_index (self):
-        """Return the current row or column index of the rectangle"""
-        if self.is_vertical ():
-            return int (self.x / self.width)
-        else:
-            return int (self.y / self.length)
-
-    def move_to_col (self, index, reset_top = True):
-        """Moves and re-orients the rectangle to a column specified by an index"""
-        # Reorient the rectangle to be vertical
-        if not self.is_vertical():
-            self.rotate90 ()
-        # Set the rectangle to the proper position
-        self.x = index * self.width
-        if reset_top:
-            self.y = 0
-
-    def move_to_row (self, index, reset_left = True):
-        """Moves and re-orients the rectangle to a row specified by an index"""
-        # Reorient the rectangle to be horizontal
-        if self.is_vertical ():
-            self.rotate90 ()
-        # Set the rectangel to the proper position
-        self.y = index * self.length
-        if reset_left:
-            self.x = 0
-
-    def rotate90 (self):
-        """Rotates the rectangle 90 degrees"""
-        temp = self.width
-        self.width = self.length
-        self.length = temp
-
-    def move_vertical (self, distance):
-        """Moves the rectangle by some distance in the y-direction"""
-        self.y += distance
-
-    def move_horizontal (self, distance):
-        """Moves the rectangle by some distance in the x-direction"""
-        self.x += distance
-
-    def is_vertical (self):
-        """Returns true if the rectangle is oriented vertically"""
-        return self.length > self.width
-
-    def refill_available_rcs (self):
-        """Refills the lists of available rows and columns with index values"""
-        self.remaining_rows = range (6)
-        self.remaining_cols = range (6)
-
-    def select_rand_row (self):
-        """Selects a row from the available_rows"""
-        rand_index = random.randint (0, len (self.remaining_rows) - 1)
-        row = self.remaining_rows[rand_index]
-        return row
-
-    def select_rand_col (self):
-        """Selects a random column from the available_cols"""
-        rand_index = random.randint (0, len (self.remaining_cols) - 1)
-        col = self.remaining_cols[rand_index]
-        return col
-
-    def end_of_sequence (self):
-        """Returns true if there are no more available moves for the rect"""
-        return len (self.remaining_cols) == 0 and len (self.remaining_rows) == 0
-
-    def update (self):
-        """Moves the recangle by one row or column and creates epoch"""
-        # Move the rectangle by randomly selecting a row or column
-        if self.settings['presentation']['random_highlight']:
-            # The remaining columns and row lists need to be refilled
-            if self.end_of_sequence ():
-                self.refill_available_rcs ()
-
-            # Freely choose between available rows and columns
-            if len (self.remaining_cols) > 0 and len (self.remaining_rows) > 0:
-                if random.random () > 0.5:
-                    next_col = self.select_rand_col ()
-                    self.move_to_col (next_col)
-                    self.remaining_cols.remove (next_col)
-                else:
-                    next_row = self.select_rand_row ()
-                    self.move_to_row (next_row)
-                    self.remaining_rows.remove (next_row)
-
-            elif len (self.remaining_cols) == 0:
-                next_row = self.select_rand_row ()
-                self.move_to_row (next_row)
-                self.remaining_rows.remove (next_row)
-
-            elif len (self.remaining_rows) == 0:
-                next_col = self.select_rand_col ()
-                self.move_to_col (next_col)
-                self.remaining_cols.remove (next_col)
-
-        # Move linearly through all the rows and columns
-        else:
-            if self.is_vertical ():
-                self.move_horizontal (self.width)
-                if self.x + self.width > self.max_x:
-                    self.x = 0
-                    self.rotate90 ()
-            else:
-                self.move_vertical (self.length)
-                if self.y + self.length > self.max_y:
-                    self.y = 0
-                    self.rotate90 ()
-
-    def draw (self, canvas):
-        """Draws the rectange to a Tkinter canvas"""
-        if self.visible:
-            if self.graphic_ref != None:
-                canvas.delete (self.graphic_ref)
-            self.graphic_ref = canvas.create_rectangle (
-                                                        self.x,
-                                                        self.y,
-                                                        self.x + self.width,
-                                                        self.y + self.length,
-                                                        fill = self.color
-                                                        )
-
-
 def main ():
-    logging.basicConfig (level = logging.DEBUG)
-
     parser = argparse.ArgumentParser ()
     parser.add_argument ('--settings', type = str, help  = 'settings file', default = 'ui_settings.yml')
+    parser.add_argument ('--perform-calibration', action = 'store_true')
+    parser.add_argument ('--debug', action = 'store_true')
     args = parser.parse_args ()
+    if args.debug:
+        log_level = logging.DEBUG
+    else:
+        log_level = logging.INFO
+    logging.basicConfig (level = log_level)
 
     settings = yaml.load (open (args.settings))
     window_settings = settings['window_settings']
@@ -641,7 +493,7 @@ def main ():
     root.protocol ('WM_DELETE_WINDOW', root.quit)
     root.geometry ('{}x{}'.format (window_settings['geometry_x'], window_settings['geometry_y']))
     root.resizable (width = False, height = False)
-    speller_gui = P300GUI (root, settings)
+    speller_gui = P300GUI (root, settings, args.perform_calibration)
     start_screen = StartScreen (root, speller_gui)
     start_screen.display_screen ()
     root.mainloop ()

@@ -2,3 +2,4 @@ brainflow
 pyyaml
 scikit-learn
 imblearn
+glob2

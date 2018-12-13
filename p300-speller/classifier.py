@@ -8,6 +8,8 @@ import yaml
 import pickle
 import sys
 
+import glob
+
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.decomposition import PCA
 from sklearn.model_selection import cross_val_score
@@ -22,8 +24,10 @@ from brainflow import *
 
 def load_data (eeg_file, event_file):
     """Load data from files"""
-    eeg_data = pd.read_csv (eeg_file)
-    event_data = pd.read_csv (event_file)
+    eeg_data = pd.DataFrame ()
+    event_data = pd.DataFrame ()
+    eeg_data = eeg_data.append (map (pd.read_csv, sorted (glob.glob (eeg_file))), ignore_index = True)
+    event_data = event_data.append (map (pd.read_csv, sorted (glob.glob (event_file))), ignore_index = True)
     eeg_data.index.name = 'index'
     event_data.index.name = 'index'
     return eeg_data, event_data
@@ -93,8 +97,9 @@ def prepare_data (eeg_data, event_data, settings, training = True):
                 target = 0
         event_eeg_data = get_data_from_event (eeg_data_chunk, event['event_start_time'], settings)
         if event_eeg_data is None:
+            logging.debug ('Stopped on iter %d/%d' % (index, event_data.shape[0]))
             break
-        event_eeg_data = event_eeg_data.select (lambda col: col.startswith ('eeg') and col not in ('eeg1', 'eeg2'), axis = 1)
+        event_eeg_data = event_eeg_data.select (lambda col: col.startswith ('eeg'), axis = 1)
         event_eeg_data = event_eeg_data.values.flatten ().tolist ()
         if training:
             event_eeg_data.append (target)
@@ -119,7 +124,7 @@ def classify_lda (data_x, data_y, settings):
     scaler.fit (x_train)
     x_train = scaler.transform (x_train)
 
-    pca = PCA ()
+    pca = PCA (n_components = 800)
     pca.fit (x_train, y_train)
     x_train = pca.transform (x_train)
 
@@ -175,11 +180,12 @@ def test_fair (settings):
     with open (os.path.join (os.path.dirname (os.path.realpath (__file__)), 'data', settings['general']['transformer']), 'rb') as f:
         pca = pickle.load (f)
 
-    eeg_data, event_data = load_data (os.path.join (os.path.dirname (os.path.realpath (__file__)), 'data','eeg_test.csv'),
-                                    os.path.join (os.path.dirname (os.path.realpath (__file__)), 'data','events_test.csv'))
+    eeg_data, event_data = load_data (os.path.join (os.path.dirname (os.path.realpath (__file__)), 'data','test_eeg_*.csv'),
+                                    os.path.join (os.path.dirname (os.path.realpath (__file__)), 'data','test_events_*.csv'))
 
     right_predictions = 0
-    for i in range (settings['training_params']['num_trials']):
+    total_trials = event_data.shape[0] // (settings['training_params']['seq_per_trial'] * 2 * settings['general']['num_cols'])
+    for i in range (total_trials):
         start_index = i * settings['training_params']['seq_per_trial'] * settings['general']['num_cols'] * 2
         stop_index = (i + 1) * settings['training_params']['seq_per_trial'] * settings['general']['num_cols'] * 2
         current_event_data = event_data.iloc[start_index:stop_index]
@@ -232,21 +238,21 @@ def test_fair (settings):
                 max_row_decision = rows_weights[i]
 
 
-        logging.debug ('decision cols %s' % ' '.join ([str (x) for x in cols_predictions]))
-        logging.debug ('decision rows %s' % ' '.join ([str (x) for x in rows_predictions]))
-        logging.debug ('col: %s row:%s' % (str (best_col_id), str (best_row_id)))
-        logging.debug ('right_col: %s right_row:%s' % (str (right_col), str (right_row)))
+        logging.info ('decision cols %s' % ' '.join ([str (x) for x in cols_predictions]))
+        logging.info ('decision rows %s' % ' '.join ([str (x) for x in rows_predictions]))
+        logging.info ('col: %s row:%s' % (str (best_col_id), str (best_row_id)))
+        logging.info ('right_col: %s right_row:%s' % (str (right_col), str (right_row)))
 
         if right_row == best_row_id and right_col == best_col_id:
             right_predictions = right_predictions + 1
 
-    logging.debug ('Correct predictions %d' % right_predictions)
+    logging.info ('Correct predictions %d/%d' % (right_predictions, total_trials))
 
 
 def main ():
     parser = argparse.ArgumentParser ()
-    parser.add_argument ('--eeg-file', type = str, help  = 'eeg file', default = os.path.join ('data', 'eeg.csv'))
-    parser.add_argument ('--event-file', type = str, help  = 'event file', default = os.path.join ('data', 'events.csv'))
+    parser.add_argument ('--eeg-file', type = str, help  = 'eeg file', default = os.path.join ('data', 'eeg_*.csv'))
+    parser.add_argument ('--event-file', type = str, help  = 'event file', default = os.path.join ('data', 'events_*.csv'))
     parser.add_argument ('--settings', type = str, help  = 'settings file', default = 'ui_settings.yml')
     parser.add_argument ('--reuse', action = 'store_true')
     parser.add_argument ('--test', action = 'store_true')
