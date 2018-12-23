@@ -11,5 +11,4 @@ P300 speller is based on [Event Related Potentials](https://en.wikipedia.org/wik
 
 ## GUI
 Brainflow GUI is based on R Shiny package and provides simple UI to monitor EEG\EMG\ECG data
-### Screenshot:
 ![image1](https://farm2.staticflickr.com/1842/30854740608_e40c6c5248_o_d.png)
