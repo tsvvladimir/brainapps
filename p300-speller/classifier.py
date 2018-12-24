@@ -189,18 +189,48 @@ def test_fair (settings):
 
         cols_weights = numpy.zeros (settings['general']['num_cols']).astype (numpy.float64)
         rows_weights = numpy.zeros (settings['general']['num_rows']).astype (numpy.float64)
+        cols_predictions = numpy.zeros (settings['general']['num_cols']).astype (numpy.float64)
+        rows_predictions = numpy.zeros (settings['general']['num_rows']).astype (numpy.float64)
         for i, decision in enumerate (decisions):
             event = current_event_data.iloc[i,:]
             if event['orientation'] == 'col':
+                if decision > 0:
+                    cols_predictions[event['highlighted']] = cols_predictions[event['highlighted']] + 1
                 cols_weights[event['highlighted']] = cols_weights[event['highlighted']] + decision
             else:
+                if decision > 0:
+                    rows_predictions[event['highlighted']] = rows_predictions[event['highlighted']] + 1
                 rows_weights[event['highlighted']] = rows_weights[event['highlighted']] + decision
 
-        best_col_id = np.argmax (cols_weights)
-        best_row_id = np.argmax (rows_weights)
+        best_col_id = None
+        best_row_id = None
 
-        logging.info ('decision cols %s' % ' '.join (['%.2f' % x for x in cols_weights]))
-        logging.info ('decision rows %s' % ' '.join (['%.2f' % x for x in rows_weights]))
+        max_col_predictions = 0
+        max_col_decision = 0
+        max_row_predictions = 0
+        max_row_decision = 0
+        for i in range (settings['general']['num_cols']):
+            if cols_predictions[i] > max_col_predictions:
+                best_col_id = i
+                max_col_predictions = cols_predictions[i]
+                max_col_decision = cols_weights[i]
+            elif cols_predictions[i] == max_col_predictions and max_col_decision < cols_weights[i]:
+                best_col_id = i
+                max_col_predictions = cols_predictions[i]
+                max_col_decision = cols_weights[i]
+
+        for i in range (settings['general']['num_rows']):
+            if rows_predictions[i] > max_row_predictions:
+                best_row_id = i
+                max_row_predictions = rows_predictions[i]
+                max_row_decision = rows_weights[i]
+            elif rows_predictions[i] == max_row_predictions and max_row_decision < rows_weights[i]:
+                best_row_id = i
+                max_row_predictions = rows_predictions[i]
+                max_row_decision = rows_weights[i]
+
+        logging.info ('decision cols %s' % ' '.join ([str (x) % x for x in cols_predictions]))
+        logging.info ('decision rows %s' % ' '.join ([str (x) % x for x in rows_predictions]))
         logging.info ('predicted col: %s predicted row:%s' % (str (best_col_id), str (best_row_id)))
         logging.info ('right_col: %s right_row:%s' % (str (right_col), str (right_row)))
 
