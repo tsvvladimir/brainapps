@@ -2,7 +2,6 @@ import argparse
 import os
 import pandas as pd
 import numpy as np
-from scipy import signal
 import logging
 import yaml
 import pickle
@@ -52,32 +51,23 @@ def get_data_from_event (eeg_data, event_timestamp, settings):
     else:
         raise ValueError ('invalid board')
 
-def calculate_wavelet (eeg_data):
-    """Calculate wavelet transform"""
-    features = list ()
-    widths = np.arange (1, 10, 2)
-    for column_name in eeg_data.columns:
-        features += signal.cwt (eeg_data[column_name], signal.ricker, widths = widths).flatten ().tolist ()
-    return features
-
 def prepare_data (eeg_data, event_data, settings, training = True):
     """Prepare data for classification"""
     data = list ()
-    columns = [x for x in eeg_data.columns.values if x.startswith ('eeg')]
-    logging.debug ('eeg columns %s' % ' '.join (columns))
-
     if training:
         seq_per_trial = settings['training_params']['seq_per_trial']
     else:
         seq_per_trial = settings['live_params']['seq_per_trial']
+    num_events = (settings['general']['num_cols'] + settings['general']['num_rows']) * seq_per_trial
 
     for index, event in event_data.iterrows ():
         # get data chunk to speed up get_data_from_event
-        if index % (settings['general']['num_cols'] * 2 * seq_per_trial) == 0:
-            logging.debug ('normalizing, index: %d' % index)
+        if (index % num_events == 0):
+            logging.debug ('chunk for index: %d' % index)
             # find start and stop time
             start_time = event['event_start_time']
-            stop_time = event_data.iloc[[index + settings['general']['num_cols'] * 2 * seq_per_trial - 1]]['event_start_time'] + settings['general']['eeg_end'] / 1000.0
+            last_chunk_event_index = min (index + num_events - 1, event_data.shape[0] - 1)
+            stop_time = event_data.iloc[[last_chunk_event_index]]['event_start_time'] + settings['general']['eeg_end'] / 1000.0
             if settings['general']['board'] == 'Cython':
                 num_datapoints = int (CYTHON.fs_hz * (stop_time - start_time))
             else:
@@ -88,20 +78,20 @@ def prepare_data (eeg_data, event_data, settings, training = True):
             logging.debug ('num_datapoints: %d' % num_datapoints)
             eeg_data_chunk = eeg_data_chunk.iloc[0:num_datapoints]
             eeg_data_chunk.index.name = 'index'
-        
+
+        event_eeg_data = get_data_from_event (eeg_data_chunk, event['event_start_time'], settings)
+        if event_eeg_data is None:
+            logging.debug ('Stopped on iter %d/%d' % (index, event_data.shape[0]))
+            break
+        event_eeg_data = event_eeg_data.select (lambda col: col.startswith ('eeg'), axis = 1)
+        event_eeg_data = event_eeg_data.values.flatten ('F').tolist ()
+
         if training:
             if (event['orientation'] == 'col' and (event['highlighted']) == event['trial_col'])\
             or (event['orientation'] == 'row' and (event['highlighted']) == event['trial_row']):
                 target = 1
             else:
                 target = 0
-        event_eeg_data = get_data_from_event (eeg_data_chunk, event['event_start_time'], settings)
-        if event_eeg_data is None:
-            logging.debug ('Stopped on iter %d/%d' % (index, event_data.shape[0]))
-            break
-        event_eeg_data = event_eeg_data.select (lambda col: col.startswith ('eeg'), axis = 1)
-        event_eeg_data = event_eeg_data.values.flatten ().tolist ()
-        if training:
             event_eeg_data.append (target)
         data.append (event_eeg_data)
 
@@ -173,6 +163,7 @@ def get_classes (data_x, scaler, transformer, classifier):
     return classifier.predict (data_x)
 
 def test_fair (settings):
+    num_events = settings['training_params']['seq_per_trial'] * (settings['general']['num_cols'] + settings['general']['num_rows'])
     with open (os.path.join (os.path.dirname (os.path.realpath (__file__)), 'data', settings['general']['scaler']), 'rb') as f:
         scaler = pickle.load (f)
     with open (os.path.join (os.path.dirname (os.path.realpath (__file__)), 'data', settings['general']['classifier']), 'rb') as f:
@@ -184,10 +175,10 @@ def test_fair (settings):
                                     os.path.join (os.path.dirname (os.path.realpath (__file__)), 'data','test_events_*.csv'))
 
     right_predictions = 0
-    total_trials = event_data.shape[0] // (settings['training_params']['seq_per_trial'] * 2 * settings['general']['num_cols'])
+    total_trials = (event_data.shape[0] + 1 ) // num_events
     for i in range (total_trials):
-        start_index = i * settings['training_params']['seq_per_trial'] * settings['general']['num_cols'] * 2
-        stop_index = (i + 1) * settings['training_params']['seq_per_trial'] * settings['general']['num_cols'] * 2
+        start_index = i * num_events
+        stop_index = (i + 1) * num_events
         current_event_data = event_data.iloc[start_index:stop_index]
         current_event_data.index = range (len (current_event_data.index))
         right_col = event_data['trial_col'].values[start_index]
@@ -197,50 +188,20 @@ def test_fair (settings):
         decisions = get_decison (data_x, scaler, pca, classifier)
 
         cols_weights = numpy.zeros (settings['general']['num_cols']).astype (numpy.float64)
-        rows_weights = numpy.zeros (settings['general']['num_cols']).astype (numpy.float64)
-        cols_predictions = numpy.zeros (settings['general']['num_cols']).astype (numpy.int64)
-        rows_predictions = numpy.zeros (settings['general']['num_cols']).astype (numpy.int64)
+        rows_weights = numpy.zeros (settings['general']['num_rows']).astype (numpy.float64)
         for i, decision in enumerate (decisions):
             event = current_event_data.iloc[i,:]
             if event['orientation'] == 'col':
-                if decision > 0:
-                    cols_predictions[event['highlighted']] = cols_predictions[event['highlighted']] + 1
                 cols_weights[event['highlighted']] = cols_weights[event['highlighted']] + decision
             else:
-                if decision > 0:
-                    rows_predictions[event['highlighted']] = rows_predictions[event['highlighted']] + 1
                 rows_weights[event['highlighted']] = rows_weights[event['highlighted']] + decision
 
-        best_col_id = None
-        best_row_id = None
+        best_col_id = np.argmax (cols_weights)
+        best_row_id = np.argmax (rows_weights)
 
-        max_col_predictions = 0
-        max_col_decision = 0
-        max_row_predictions = 0
-        max_row_decision = 0
-        for i in range (settings['general']['num_cols']):
-            if cols_predictions[i] > max_col_predictions:
-                best_col_id = i
-                max_col_predictions = cols_predictions[i]
-                max_col_decision = cols_weights[i]
-            elif cols_predictions[i] == max_col_predictions and max_col_decision < cols_weights[i]:
-                best_col_id = i
-                max_col_predictions = cols_predictions[i]
-                max_col_decision = cols_weights[i]
-
-            if rows_predictions[i] > max_row_predictions:
-                best_row_id = i
-                max_row_predictions = rows_predictions[i]
-                max_row_decision = rows_weights[i]
-            elif rows_predictions[i] == max_row_predictions and max_row_decision < rows_weights[i]:
-                best_row_id = i
-                max_row_predictions = rows_predictions[i]
-                max_row_decision = rows_weights[i]
-
-
-        logging.info ('decision cols %s' % ' '.join ([str (x) for x in cols_predictions]))
-        logging.info ('decision rows %s' % ' '.join ([str (x) for x in rows_predictions]))
-        logging.info ('col: %s row:%s' % (str (best_col_id), str (best_row_id)))
+        logging.info ('decision cols %s' % ' '.join (['%.2f' % x for x in cols_weights]))
+        logging.info ('decision rows %s' % ' '.join (['%.2f' % x for x in rows_weights]))
+        logging.info ('predicted col: %s predicted row:%s' % (str (best_col_id), str (best_row_id)))
         logging.info ('right_col: %s right_row:%s' % (str (right_col), str (right_row)))
 
         if right_row == best_row_id and right_col == best_col_id:

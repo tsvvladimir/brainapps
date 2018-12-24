@@ -82,6 +82,7 @@ class StartScreen (tk.Frame):
         self.next_screen.update ()
         self.remove_screen ()
 
+
 class SelectionRectangle ():
     """Manages the rectangle that highlights the characters in the grid"""
     def __init__ (self, settings, x, y, length, width, max_x, max_y, color = '#ffffff'):
@@ -95,8 +96,8 @@ class SelectionRectangle ():
         self.color = color
         self.max_x = max_x
         self.max_y = max_y
-        self.remaining_rows = range (6)
-        self.remaining_cols = range (6)
+        self.remaining_rows = range (self.settings['general']['num_rows'])
+        self.remaining_cols = range (self.settings['general']['num_cols'])
         self.visible = True
 
     def get_index (self):
@@ -106,20 +107,20 @@ class SelectionRectangle ():
         else:
             return int (self.y / self.length)
 
-    def move_to_col (self, index, reset_top = True):
+    def move_to_col (self, index, reset_top = True, rotate = True):
         """Moves and re-orients the rectangle to a column specified by an index"""
         # Reorient the rectangle to be vertical
-        if not self.is_vertical():
+        if not self.is_vertical() and rotate:
             self.rotate90 ()
         # Set the rectangle to the proper position
         self.x = index * self.width
         if reset_top:
             self.y = 0
 
-    def move_to_row (self, index, reset_left = True):
+    def move_to_row (self, index, reset_left = True, rotate = True):
         """Moves and re-orients the rectangle to a row specified by an index"""
         # Reorient the rectangle to be horizontal
-        if self.is_vertical ():
+        if self.is_vertical () and rotate:
             self.rotate90 ()
         # Set the rectangel to the proper position
         self.y = index * self.length
@@ -146,8 +147,8 @@ class SelectionRectangle ():
 
     def refill_available_rcs (self):
         """Refills the lists of available rows and columns with index values"""
-        self.remaining_rows = range (6)
-        self.remaining_cols = range (6)
+        self.remaining_rows = range (self.settings['general']['num_rows'])
+        self.remaining_cols = range (self.settings['general']['num_cols'])
 
     def select_rand_row (self):
         """Selects a row from the available_rows"""

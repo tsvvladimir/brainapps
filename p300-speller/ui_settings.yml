@@ -1,5 +1,6 @@
 general:
   num_cols: 6
+  num_rows: 7
   epoch_length: 1000
   eeg_delay: 100
   eeg_end: 850
@@ -8,11 +9,17 @@ general:
   scaler: "scaler.pickle"
   transformer: "pca.pickle"
   classifier: "classifier.pickle"
+  default_words:
+    - "yes"
+    - "no"
+    - "good"
+    - "bad"
 
 window_settings:
   geometry_x: 1024
   geometry_y: 1024
   grid_width: 900
+  grid_height: 900
 
 presentation:
   highlight_time: 100
@@ -37,7 +44,7 @@ training_params:
 live_params:
   seq_per_trial: 15
   max_repeat: 2
-  stop_thresh: 0.2
+  stop_thresh: 0.15
 
 calib_params:
   word: "brainflow"

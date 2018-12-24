@@ -15,70 +15,104 @@ import argparse
 import yaml
 import pickle
 import logging
+from enum import Enum
+
+from autocomplete import autocomplete
 
 from brainflow import *
 
 import classifier
 from ui_helpers import StartScreen, SelectionRectangle
 
+class SpecialChars (Enum):
+    Delete = 'DEL'
+    Space = 'SPACE'
+
 
 class P300GUI (tk.Frame):
     """The main screen of the application that displays the character grid and spelling buffer"""
     def __init__ (self, master, settings, perform_calibration = False):
         tk.Frame.__init__ (self, master)
-        # df to store events
-        self.event_data = pd.DataFrame (columns = ['event_start_time', 'orientation', 'highlighted', 'trial_row', 'trial_col'])
-        self.is_streaming = False
-        self.num_cols = settings['general']['num_cols']
+        
+        # set some variables from settings
         self.settings = settings
-        self.grid_width = settings['window_settings']['grid_width']
-        self.is_training = False
-        self.highlight_time = settings['presentation']['highlight_time']
-        self.intermediate_time = settings['presentation']['intermediate_time']
+        for key, value in self.settings.items ():
+            setattr (self, key, value)
+        self.num_cols = self.general['num_cols']
+        self.num_rows = self.general['num_rows']
+        self.last_row = [x.upper () for x in self.general['default_words']]
+        # add delete and space buttons to last row
+        self.last_row.append (SpecialChars.Delete.value)
+        self.last_row.append (SpecialChars.Space.value)
+        self.grid_width = self.window_settings['grid_width']
+        self.grid_height = self.window_settings['grid_height']
+        self.highlight_time = self.presentation['highlight_time']
+        self.intermediate_time = self.presentation['intermediate_time']
+        self.epoch_length = self.general['epoch_length']
         self.col_width = self.grid_width / self.num_cols
+        self.row_height = self.grid_height / self.num_rows
+        
+        # df to store events
+        self.event_data = pd.DataFrame (columns = ['event_start_time', 'orientation', 'highlighted', 'trial_row', 'trial_col', 'calibration'])
+
+        # board params
+        self.is_streaming = False
+        if self.general['board'] == 'Cython':
+            self.board_id = CYTHON.board_id
+            self.board = BoardShim (self.board_id, self.general['port'])
+            self.board.prepare_session ()
+        else:
+            raise ValueError ('unsupported board type')
+        
+        # training params
+        self.is_training = False
+        self.trial_row = -1
+        self.trial_col = -1
+        self.trial_count = 0
+        self.perform_calibration = perform_calibration
+        self.calibration_completed = False
+        self.untrained_chars = range (self.num_cols * self.num_rows)
+        self.training_sequence = list ()
+        self.trial_in_progress = False
+        self.char_highlighted = False
+
+        # live params
+        self.scaler = None
+        self.pca = None
+        self.classifier = None
+        self.autocomplete = autocomplete.Autocomplete ()
+        self.current_live_count = 0
+        self.cols_weights = None
+        self.rows_weights = None
+        self.cols_predictions = None
+        self.rows_predictions = None
+
+        # general
         self.selection_rect = self.make_rectangle ()
         self.canvas = tk.Canvas (self)
         self.spelled_text = tk.StringVar ()
         self.spelled_text.set ('')
         self.text_buffer = tk.Entry (self, font = ('Arial', 24, 'bold'), cursor = 'arrow',
                                     insertbackground = '#ffffff', textvariable = self.spelled_text)
-        self.trial_row = -1
-        self.trial_col = -1
-        self.trial_count = 0
-        # for some cases it may be usefull to perform calibration before live mode, but current implementation doesn't use it
-        # always enabled in training mode 
-        self.perform_calibration = perform_calibration
-        self.calibration_completed = False
-        
-        self.untrained_chars = range (self.num_cols * self.num_cols)
-        self.training_sequence = list ()
         self.sequence_count = 0
-        self.trial_in_progress = False
-        self.char_highlighted = False
-
         self.char_select_rect = SelectionRectangle (
                                                     self.settings,
-                                                    x = self.col_width * self.trial_col, y = self.col_width * self.trial_row,
-                                                    width = self.col_width, length = self.col_width,
-                                                    max_x = self.grid_width, max_y = self.grid_width,
-                                                    color = self.settings['presentation']['char_select_color']
+                                                    x = self.col_width * self.trial_col, y = self.row_height * self.trial_row,
+                                                    width = self.col_width, length = self.row_height,
+                                                    max_x = self.grid_width, max_y = self.grid_height,
+                                                    color = self.presentation['char_select_color']
                                                     )
         self.create_widgets ()
-        if settings['general']['board'] == 'Cython':
-            self.board_id = CYTHON.board_id
-            self.board = BoardShim (self.board_id, settings['general']['port'])
-            self.board.prepare_session ()
-        else:
-            raise ValueError ('unsupported board type')
 
     def set_training_mode (self, is_training):
+        """Set training or live mode"""
         self.is_training = is_training
         if self.is_training:
             self.perform_calibration = True
         if self.perform_calibration:
-            self.training_sequence += [x.upper () for x in self.settings['calib_params']['word']]
-        if is_training:
-            for i in range (self.settings['training_params']['num_trials']):
+            self.training_sequence += [x.upper () for x in self.calib_params['word']]
+        if self.is_training:
+            for i in range (self.training_params['num_trials']):
                 rand_index = random.randint (0, len (self.untrained_chars) - 1)
                 char_num = self.untrained_chars[rand_index]
                 row = char_num // self.num_cols
@@ -97,10 +131,10 @@ class P300GUI (tk.Frame):
                 self.classifier = pickle.load (f)
 
             self.current_live_count = 0
-            self.cols_weights = numpy.zeros (self.settings['general']['num_cols']).astype (numpy.float64)
-            self.rows_weights = numpy.zeros (self.settings['general']['num_cols']).astype (numpy.float64)
-            self.cols_predictions = numpy.zeros (self.settings['general']['num_cols']).astype (numpy.int64)
-            self.rows_predictions = numpy.zeros (self.settings['general']['num_cols']).astype (numpy.int64)
+            self.cols_weights = numpy.zeros (self.num_cols).astype (numpy.float64)
+            self.rows_weights = numpy.zeros (self.num_rows).astype (numpy.float64)
+            self.cols_predictions = numpy.zeros (self.num_cols).astype (numpy.float64)
+            self.rows_predictions = numpy.zeros (self.num_rows).astype (numpy.float64)
 
     def display_screen (self):
         """Adds this screen to the window"""
@@ -127,10 +161,10 @@ class P300GUI (tk.Frame):
                     self.spelled_text.set ('Your text:')
                     self.calibration_completed = True
                     if self.perform_calibration:
-                        self.master.after (self.settings['training_params']['wait_timeout'], self.update)
+                        self.master.after (self.training_params['wait_timeout'], self.update)
                     else:
                         self.draw_characters ()
-                        self.master.after (self.settings['training_params']['wait_timeout'] // 2, self.update)
+                        self.master.after (self.training_params['wait_timeout'], self.update)
                 else:
                     self.live_update ()
 
@@ -141,8 +175,8 @@ class P300GUI (tk.Frame):
             character = self.training_sequence[0]
             self.trial_row, self.trial_col = self.get_row_col (character)
             # Move the char highlight rect behind the character
-            self.char_select_rect.move_to_col (self.trial_col, reset_top = False)
-            self.char_select_rect.move_to_row (self.trial_row, reset_left = False)
+            self.char_select_rect.move_to_col (self.trial_col, reset_top = False, rotate = False)
+            self.char_select_rect.move_to_row (self.trial_row, reset_left = False, rotate = False)
             # highlight the character
             self.char_highlighted = True
             self.trial_in_progress = True
@@ -150,7 +184,7 @@ class P300GUI (tk.Frame):
             self.spelled_text.set ('Look at: %s' % str (self.get_character (self.trial_row, self.trial_col)))
             # Wait
             self.master.after (self.settings['training_params']['wait_timeout'], self.update)
-
+        # start blinking
         elif self.trial_in_progress:
             # Turn off the highlighting of the character
             if self.char_highlighted:
@@ -175,16 +209,16 @@ class P300GUI (tk.Frame):
 
                 if self.selection_rect.end_of_sequence ():
                     self.sequence_count = self.sequence_count + 1
-                    if self.sequence_count >= self.settings['training_params']['seq_per_trial']:
+                    if self.sequence_count >= self.training_params['seq_per_trial']:
                         self.trial_count = self.trial_count + 1
                         self.sequence_count = 0
                         self.trial_in_progress = False
                         self.training_sequence.pop (0)
-                        if self.trial_count == len (self.settings['calib_params']['word']) and self.perform_calibration:
+                        if self.trial_count == len (self.calib_params['word']) and self.perform_calibration:
                             self.calibration_completed = True
-                        self.master.after (self.settings['general']['epoch_length'] + self.intermediate_time, self.update)
+                        self.master.after (self.epoch_length + self.intermediate_time, self.update)
                     else:
-                        self.master.after (self.settings['general']['epoch_length'] + self.intermediate_time, self.update)
+                        self.master.after (self.epoch_length + self.intermediate_time, self.update)
                 else:
                     # Keep the rect invisible for a set amount of time
                     self.master.after (self.intermediate_time, self.update)
@@ -205,21 +239,19 @@ class P300GUI (tk.Frame):
             self.selection_rect.visible = True
             if self.selection_rect.end_of_sequence ():
                 self.sequence_count = self.sequence_count + 1
-                if self.sequence_count >= self.settings['live_params']['seq_per_trial']:
-                    self.master.after (self.settings['general']['epoch_length'] + self.intermediate_time, self.update)
-                    time.sleep (self.settings['general']['epoch_length'] / 1000.0)
-
+                if self.sequence_count >= self.live_params['seq_per_trial']:
+                    self.master.after (self.epoch_length + self.intermediate_time, self.update)
+                    time.sleep (self.epoch_length / 1000.0)
                     # get predicted character
                     predicted_row, predicted_col = self.get_predicted ()
                     # free old events
-                    self.event_data = pd.DataFrame (columns = ['event_start_time', 'orientation', 'highlighted', 'trial_row', 'trial_col'])
+                    self.event_data = pd.DataFrame (columns = ['event_start_time', 'orientation', 'highlighted', 'trial_row', 'trial_col', 'calibration'])
                     if predicted_row is not None and predicted_col is not None:
-                        predicted_char = self.get_character (predicted_row, predicted_col)
-                        self.add_text (predicted_char)
+                        self.add_text (predicted_row, predicted_col)
+                        self.update_words ()
                         self.free_live_variables ()
                     else:
-                        logging.debug ('trying to expand data')
-
+                        logging.info ('trying to expand data to improve confidence')
                     self.sequence_count = 0
                 else:
                     self.master.after (self.settings['general']['epoch_length'] + self.intermediate_time, self.update)
@@ -230,16 +262,20 @@ class P300GUI (tk.Frame):
     def free_live_variables (self):
         # free current weights
         self.current_live_count = 0
-        self.cols_weights = numpy.zeros (self.settings['general']['num_cols']).astype (numpy.float64)
-        self.rows_weights = numpy.zeros (self.settings['general']['num_cols']).astype (numpy.float64)
-        self.cols_predictions = numpy.zeros (self.settings['general']['num_cols']).astype (numpy.int64)
-        self.rows_predictions = numpy.zeros (self.settings['general']['num_cols']).astype (numpy.int64)
+        self.cols_weights = numpy.zeros (self.num_cols).astype (numpy.float64)
+        self.rows_weights = numpy.zeros (self.num_rows).astype (numpy.float64)
+        self.cols_predictions = numpy.zeros (self.num_cols).astype (numpy.int64)
+        self.rows_predictions = numpy.zeros (self.num_rows).astype (numpy.int64)
 
     def get_row_col (self, character):
         if character.isdigit ():
             cell_num = 26 + int (character)
-        else:
+        elif len (character) == 1:
             cell_num = ord (character.upper ()) - ord ('A')
+        else:
+            for i, word in enumerate (self.last_row):
+                if word == character:
+                    cell_num = self.num_cols * (self.num_rows - 1) + i
         row = cell_num // self.num_cols
         col = cell_num % self.num_cols
         return row, col
@@ -249,15 +285,19 @@ class P300GUI (tk.Frame):
         cell_num = (row * self.num_cols) + col
         if cell_num <= 25:
             return chr (ord ('A') + cell_num)
-        else:
+        elif row < (self.num_rows - 1):
             return str (cell_num - 26)
+        elif row == (self.num_rows - 1):
+            return self.last_row[col]
+        else:
+            raise ValueError ('wrong row\col')
 
     def draw (self):
         """Redraws the canvas"""
         self.canvas.delete ('all')
         if self.char_highlighted:
             self.selection_rect.x = -10000
-            self.selection_rect.x = -10000
+            self.selection_rect.y = -10000
             self.char_select_rect.draw (self.canvas)
         else:
             self.selection_rect.draw (self.canvas)
@@ -269,75 +309,93 @@ class P300GUI (tk.Frame):
             return SelectionRectangle (
                                         self.settings,
                                         x = 0, y = 0,
-                                        width = self.col_width, length = self.grid_width,
-                                        color = self.settings['presentation']['rect_color'],
-                                        max_x = self.grid_width, max_y = self.grid_width
+                                        width = self.col_width, length = self.grid_height,
+                                        color = self.presentation['rect_color'],
+                                        max_x = self.grid_width, max_y = self.grid_height
                                       )
         else:
             return SelectionRectangle (
                                         self.settings,
                                         x = 0, y = 0,
-                                        width = self.grid_width,
-                                        length = self.col_width,
-                                        color = self.settings['presentation']['rect_color'],
-                                        max_x = self.grid_width, max_y = self.grid_width
+                                        width = self.grid_width, length = self.row_height,
+                                        color = self.presentation['rect_color'],
+                                        max_x = self.grid_width, max_y = self.grid_height
                                       )
 
     def draw_characters (self):
-        """Draws 36 characters [a-z] and [0-9] in a 6x6 grid"""
-        row_height = int (self.canvas['height']) / self.num_cols
-
-        # Draw the characters to the canvas
-        ascii_letter_offset = 65
-        ascii_number_offset = 48
-        ascii_offset = ascii_letter_offset
-        current_offset = 0
-
-        for row in range (self.num_cols):
+        """Draws"""
+        max_word_len = max ([len (x) for x in self.last_row])
+        for row in range (self.num_rows):
             for col in range (self.num_cols):
-                # Case that we have gone through all characters
-                if current_offset == 26 and ascii_offset == ascii_letter_offset:
-                    ascii_offset = ascii_number_offset
-                    current_offset = 0
-                # Case that we have gone though all of the numbers
-                elif current_offset == 10 and ascii_offset == ascii_number_offset:
-                    break
-                # Get the current cell character
-                cell_char = chr (ascii_offset + current_offset)
-                current_offset =  current_offset + 1
-
+                element = self.get_character (row, col)
                 # Determine if this character is printed white or black
                 if self.selection_rect != None:
                     if ((self.selection_rect.is_vertical () and col == self.selection_rect.get_index ()
                          or not self.selection_rect.is_vertical () and row == self.selection_rect.get_index ())
                          and self.selection_rect.visible):
+                        
+                        if row == (self.num_rows - 1):
+                            font_size = int (self.col_width / (1.25 * max_word_len))
+                        else:
+                            font_size = int (self.col_width / 3.5)
                         canvas_id = self.canvas.create_text ((self.col_width * col) + (self.col_width / 2.5),
-                                                    (row_height * row) + (row_height / 3),
-                                                    font = ('Arial', (int (self.col_width / 3.5)), 'bold'),
+                                                    (self.row_height * row) + (self.row_height / 3),
+                                                    font = ('Arial', font_size, 'bold'),
                                                     anchor = 'nw')
-                        self.canvas.itemconfig (canvas_id, text = cell_char, fill = self.settings['presentation']['highlight_char_color'])
+                        self.canvas.itemconfig (canvas_id, text = element, fill = self.settings['presentation']['highlight_char_color'])
                     else:
+                        if row == (self.num_rows - 1):
+                            font_size = int (self.col_width / (1.5 * max_word_len))
+                        else:
+                            font_size = int (self.col_width / 4)
                         canvas_id = self.canvas.create_text ((self.col_width * col) + (self.col_width / 2.5),
-                                                    (row_height * row) + (row_height / 3),
-                                                    font = ('Arial', (self.col_width / 4), 'bold'),
+                                                    (self.row_height * row) + (self.row_height / 3),
+                                                    font = ('Arial', font_size, 'bold'),
                                                     anchor = 'nw')
-                        self.canvas.itemconfig (canvas_id, text = cell_char, fill = self.settings['presentation']['default_char_color'])
+                        self.canvas.itemconfig (canvas_id, text = element, fill = self.settings['presentation']['default_char_color'])
 
     def add_space (self):
         """Adds a space '_' to the spelled text buffer"""
         self.spelled_text.set (self.spelled_text.get () + "_")
         self.text_buffer.icursor (len (self.spelled_text.get ()))
+        self.last_row = [x.upper () for x in self.general['default_words']]
+        self.last_row.append (SpecialChars.Delete.value)
+        self.last_row.append (SpecialChars.Space.value)
 
     def delete_last (self):
         """Deletes the last character in the spelled text buffer"""
-        if len (self.spelled_text.get ()) > 0:
+        if len (self.spelled_text.get ().split (':')[1]) > 0:
             self.spelled_text.set (self.spelled_text.get ()[:-1])
             self.text_buffer.icursor (len (self.spelled_text.get ()))
 
-    def add_text (self, text):
+    def update_words (self):
+        current_text = self.spelled_text.get ().split (':')[1]
+        text_to_predict_next = current_text.replace ('_', ' ')
+        predicted = self.autocomplete.split_predict (text_to_predict_next)
+        logging.debug ('current text: %s predicted words: %s' % (text_to_predict_next, str (predicted)))
+        for i, prediction in enumerate (predicted):
+            if i < 4:
+                self.last_row[i] = prediction[0].upper ()
+            else:
+                break
+
+    def add_text (self, row, col):
         """Appends some given text to the sppelled text buffer"""
-        self.spelled_text.set (self.spelled_text.get () + text)
-        self.text_buffer.icursor (len (self.spelled_text.get ()))
+        if row == (self.num_rows - 1) and col == (self.num_cols - 2):
+            self.delete_last ()
+        elif row == (self.num_rows - 1) and col == (self.num_cols - 1):
+            self.add_space ()
+        elif row == (self.num_rows - 1):
+            text = self.get_character (row, col)
+            common, current_text = self.spelled_text.get ().split (':')
+            new_text = common + ':' + current_text[0:current_text.rfind ('_') + 1] + text
+            self.spelled_text.set (new_text)
+            self.text_buffer.icursor (len (self.spelled_text.get ()))
+            self.add_space ()
+        else:
+            text = self.get_character (row, col)
+            self.spelled_text.set (self.spelled_text.get () + text)
+            self.text_buffer.icursor (len (self.spelled_text.get ()))
 
     def create_widgets (self):
         """Populates the gui with all the necessary components"""
@@ -387,10 +445,7 @@ class P300GUI (tk.Frame):
         if self.is_training:
             time_created = int (time.time ())
             event_file = os.path.join (os.path.dirname (os.path.abspath (__file__)), 'data', 'events_%d.csv' % time_created)
-            if os.path.isfile (event_file):
-                self.event_data.to_csv (event_file, mode = 'a', header = False, index = False)
-            else:
-                self.event_data.to_csv (event_file, index = False)
+            self.event_data.to_csv (event_file, index = False)
 
             data = self.board.get_board_data ()
             data_handler = DataHandler (self.board_id, numpy_data = data)
@@ -401,16 +456,16 @@ class P300GUI (tk.Frame):
         """perform prediction"""
         self.current_live_count = self.current_live_count + 1
 
-        eeg_data = self.board.get_current_board_data (int (CYTHON.fs_hz * (self.settings['general']['epoch_length'] * (self.settings['live_params']['seq_per_trial'] + 2)) / 1000.0 ))
+        eeg_data = self.board.get_current_board_data (int (CYTHON.fs_hz * (self.epoch_length * (self.live_params['seq_per_trial'] + 2)) / 1000.0 ))
         data_handler = DataHandler (self.board_id, numpy_data = eeg_data)
         eeg_data = data_handler.get_data ()
         eeg_data.index.name = 'index'
         self.event_data.index.name = 'index'
 
         data_x, _ = classifier.prepare_data (eeg_data, self.event_data, self.settings, False)
-        if data_x.shape[0] != self.settings['live_params']['seq_per_trial'] * self.settings['general']['num_cols'] * 2:
+        if data_x.shape[0] != self.live_params['seq_per_trial'] * (self.num_cols + self.num_rows):
             logging.error ('Incorrect data shape:%d, exptected:%d' % (data_x.shape[0], 
-                self.settings['live_params']['seq_per_trial'] * self.settings['general']['num_cols'] * 2))
+                            self.live_params['seq_per_trial'] * (self.num_cols + self.num_rows)))
         decisions = classifier.get_decison (data_x, self.scaler, self.pca, self.classifier)
 
         for i, decision in enumerate (decisions):
@@ -431,7 +486,8 @@ class P300GUI (tk.Frame):
         max_col_decision = 0
         max_row_predictions = 0
         max_row_decision = 0
-        for i in range (self.settings['general']['num_cols']):
+
+        for i in range (self.num_cols):
             if self.cols_predictions[i] > max_col_predictions:
                 best_col_id = i
                 max_col_predictions = self.cols_predictions[i]
@@ -441,6 +497,7 @@ class P300GUI (tk.Frame):
                 max_col_predictions = self.cols_predictions[i]
                 max_col_decision = self.cols_weights[i]
 
+        for i in range (self.num_rows):
             if self.rows_predictions[i] > max_row_predictions:
                 best_row_id = i
                 max_row_predictions = self.rows_predictions[i]
@@ -450,25 +507,28 @@ class P300GUI (tk.Frame):
                 max_row_predictions = self.rows_predictions[i]
                 max_row_decision = self.rows_weights[i]
 
-        second_col_score = sorted (self.cols_predictions.tolist ())[-2]
-        second_row_score = sorted (self.rows_predictions.tolist ())[-2]
-        if self.current_live_count < self.settings['live_params']['max_repeat']:
+        if self.current_live_count < self.live_params['max_repeat']:
+            second_col_score = sorted (self.cols_predictions.tolist ())[-2]
+            second_row_score = sorted (self.rows_predictions.tolist ())[-2]
+
             if best_col_id is not None:
                 val = self.cols_predictions[best_col_id]
-                if ((float (val - second_col_score)) / val < self.settings['live_params']['stop_thresh']):
+                if ((float (val - second_col_score)) / val < self.live_params['stop_thresh']):
                     best_col_id = None
                 if val < 2:
                     best_col_id = None
 
             if best_row_id is not None:
                 val = self.rows_predictions[best_row_id]
-                if ((float (val - second_row_score)) / val < self.settings['live_params']['stop_thresh']):
+                if ((float (val - second_row_score)) / val < self.live_params['stop_thresh']):
                     best_row_id = None
                 if val < 2:
                     best_row_id = None
 
-        logging.info ('predicted cols %s' % ' '.join ([str (x) for x in self.cols_predictions]))
-        logging.info ('predicted rows %s' % ' '.join ([str (x) for x in self.rows_predictions]))
+        logging.info ('col weights %s' % ' '.join (['%.2f' % x for x in self.cols_weights]))
+        logging.info ('row weights %s' % ' '.join (['%.2f' % x for x in self.rows_weights]))
+        logging.info ('col predictions %s' % ' '.join ([str (x) for x in self.cols_predictions]))
+        logging.info ('row predictions %s' % ' '.join ([str (x) for x in self.rows_predictions]))
         logging.info ('predicted col: %s predicted row:%s' % (str (best_col_id), str (best_row_id)))
         return best_row_id, best_col_id
 
