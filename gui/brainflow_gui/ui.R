@@ -26,7 +26,7 @@ menu <- dropdownMenu(
 sidebar <- dashboardSidebar(
     sidebarMenu(
         menuItem("OpenBCI", icon = icon("asterisk"), expandedName = "OpenBCI",
-            selectInput(inputId = 'openbci_boards', label = 'Choose Board', choices = c("Cython"), multiple = FALSE),
+            selectInput(inputId = 'openbci_boards', label = 'Choose Board', choices = c("Cyton"), multiple = FALSE),
             textInput("port", "OpenBCI Port", value = "/dev/ttyUSB0")
         ),
         textInput("descr", "Data description", placeholder = "(Optional)Describe your data"),

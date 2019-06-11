@@ -33,7 +33,7 @@ class P300GUI (tk.Frame):
     """The main screen of the application that displays the character grid and spelling buffer"""
     def __init__ (self, master, settings, perform_calibration = False):
         tk.Frame.__init__ (self, master)
-        
+
         # set some variables from settings
         self.settings = settings
         for key, value in self.settings.items ():
@@ -51,19 +51,19 @@ class P300GUI (tk.Frame):
         self.epoch_length = self.general['epoch_length']
         self.col_width = self.grid_width / self.num_cols
         self.row_height = self.grid_height / self.num_rows
-        
+
         # df to store events
         self.event_data = pd.DataFrame (columns = ['event_start_time', 'orientation', 'highlighted', 'trial_row', 'trial_col', 'calibration'])
 
         # board params
         self.is_streaming = False
-        if self.general['board'] == 'Cython':
-            self.board_id = CYTHON.board_id
+        if self.general['board'] == 'Cyton':
+            self.board_id = CYTON.board_id
             self.board = BoardShim (self.board_id, self.general['port'])
             self.board.prepare_session ()
         else:
             raise ValueError ('unsupported board type')
-        
+
         # training params
         self.is_training = False
         self.trial_row = -1
@@ -333,7 +333,7 @@ class P300GUI (tk.Frame):
                     if ((self.selection_rect.is_vertical () and col == self.selection_rect.get_index ()
                          or not self.selection_rect.is_vertical () and row == self.selection_rect.get_index ())
                          and self.selection_rect.visible):
-                        
+
                         if row == (self.num_rows - 1):
                             font_size = int (self.col_width / (1.25 * max_word_len))
                         else:
@@ -456,7 +456,7 @@ class P300GUI (tk.Frame):
         """perform prediction"""
         self.current_live_count = self.current_live_count + 1
 
-        eeg_data = self.board.get_current_board_data (int (CYTHON.fs_hz * (self.epoch_length * (self.live_params['seq_per_trial'] + 2)) / 1000.0 ))
+        eeg_data = self.board.get_current_board_data (int (CYTON.fs_hz * (self.epoch_length * (self.live_params['seq_per_trial'] + 2)) / 1000.0 ))
         data_handler = DataHandler (self.board_id, numpy_data = eeg_data)
         eeg_data = data_handler.get_data ()
         eeg_data.index.name = 'index'
@@ -464,7 +464,7 @@ class P300GUI (tk.Frame):
 
         data_x, _ = classifier.prepare_data (eeg_data, self.event_data, self.settings, False)
         if data_x.shape[0] != self.live_params['seq_per_trial'] * (self.num_cols + self.num_rows):
-            logging.error ('Incorrect data shape:%d, exptected:%d' % (data_x.shape[0], 
+            logging.error ('Incorrect data shape:%d, exptected:%d' % (data_x.shape[0],
                             self.live_params['seq_per_trial'] * (self.num_cols + self.num_rows)))
         decisions = classifier.get_decison (data_x, self.scaler, self.pca, self.classifier)
 

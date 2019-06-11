@@ -4,7 +4,7 @@ general:
   epoch_length: 1000
   eeg_delay: 100
   eeg_end: 850
-  board: "Cython"
+  board: "Cyton"
   port: "COM3"
   scaler: "scaler_win.pickle"
   transformer: "pca_win.pickle"

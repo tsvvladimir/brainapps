@@ -73,8 +73,8 @@ brainflow_server <- function(input, output, session) {
         }
         if (input$sidebarItemExpanded == "OpenBCI") {
             tryCatch({
-                if (input$openbci_boards == "Cython") {
-                    reactive_values$board <- Boards()$Cython
+                if (input$openbci_boards == "Cyton") {
+                    reactive_values$board <- Boards()$Cyton
                     reactive_values$board_shim <- get_board_shim(reactive_values$board["Type"], input$port)
                 }
                 else {

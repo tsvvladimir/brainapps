@@ -35,8 +35,8 @@ def get_data_from_event (eeg_data, event_timestamp, settings):
     """Get data associated with event"""
     first_point = event_timestamp + settings['general']['eeg_delay'] / 1000.0
     time_delta_ms = settings['general']['eeg_end'] - settings['general']['eeg_delay']
-    if settings['general']['board'] == 'Cython':
-        requested_data_points = int (CYTHON.fs_hz * time_delta_ms / 1000.0)
+    if settings['general']['board'] == 'Cyton':
+        requested_data_points = int (CYTON.fs_hz * time_delta_ms / 1000.0)
     else:
         raise ValueError ('invalid board')
 
@@ -45,8 +45,8 @@ def get_data_from_event (eeg_data, event_timestamp, settings):
         return None
     df = df.iloc[0:requested_data_points]
 
-    if settings['general']['board'] == 'Cython':
-        data_handler = DataHandler (CYTHON.board_id, df.values)
+    if settings['general']['board'] == 'Cyton':
+        data_handler = DataHandler (CYTON.board_id, df.values)
         return data_handler.preprocess_data (order = 3, start = 0.1, stop = 50)
     else:
         raise ValueError ('invalid board')
@@ -68,8 +68,8 @@ def prepare_data (eeg_data, event_data, settings, training = True):
             start_time = event['event_start_time']
             last_chunk_event_index = min (index + num_events - 1, event_data.shape[0] - 1)
             stop_time = event_data.iloc[[last_chunk_event_index]]['event_start_time'] + settings['general']['eeg_end'] / 1000.0
-            if settings['general']['board'] == 'Cython':
-                num_datapoints = int (CYTHON.fs_hz * (stop_time - start_time))
+            if settings['general']['board'] == 'Cyton':
+                num_datapoints = int (CYTON.fs_hz * (stop_time - start_time))
             else:
                 raise ValueError ('invalid board')
             logging.debug ('start_time:%f stop_time:%f diff: %f' % (start_time, stop_time, stop_time - start_time))

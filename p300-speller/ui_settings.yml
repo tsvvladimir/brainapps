@@ -4,7 +4,7 @@ general:
   epoch_length: 1000
   eeg_delay: 100
   eeg_end: 850
-  board: "Cython"
+  board: "Cyton"
   port: "/dev/ttyUSB0"
   scaler: "scaler.pickle"
   transformer: "pca.pickle"
