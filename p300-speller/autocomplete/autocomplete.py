@@ -2,7 +2,7 @@ import copy
 import logging
 from collections import Counter
 
-import models
+from . import models
 
 
 NEARBY_KEYS = {
@@ -111,7 +111,7 @@ class Autocomplete (object):
 
 def main ():
     autocomplete = Autocomplete ()
-    print autocomplete.split_predict ('it wor')
+    print (autocomplete.split_predict ('it wor'))
 
 if __name__ == '__main__':
     main ()

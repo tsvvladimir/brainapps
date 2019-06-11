@@ -25,8 +25,8 @@ def load_data (eeg_file, event_file):
     """Load data from files"""
     eeg_data = pd.DataFrame ()
     event_data = pd.DataFrame ()
-    eeg_data = eeg_data.append (map (pd.read_csv, sorted (glob.glob (eeg_file))), ignore_index = True)
-    event_data = event_data.append (map (pd.read_csv, sorted (glob.glob (event_file))), ignore_index = True)
+    eeg_data = eeg_data.append (list (map (pd.read_csv, sorted (glob.glob (eeg_file)))), ignore_index = True)
+    event_data = event_data.append (list (map (pd.read_csv, sorted (glob.glob (event_file)))), ignore_index = True)
     eeg_data.index.name = 'index'
     event_data.index.name = 'index'
     return eeg_data, event_data

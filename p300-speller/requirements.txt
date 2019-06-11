@@ -2,5 +2,4 @@ brainflow
 pyyaml
 scikit-learn
 imblearn
-glob2
-enum-compat
+glob3

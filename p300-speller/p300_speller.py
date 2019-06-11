@@ -71,7 +71,7 @@ class P300GUI (tk.Frame):
         self.trial_count = 0
         self.perform_calibration = perform_calibration
         self.calibration_completed = False
-        self.untrained_chars = range (self.num_cols * self.num_rows)
+        self.untrained_chars = list (range (self.num_cols * self.num_rows))
         self.training_sequence = list ()
         self.trial_in_progress = False
         self.char_highlighted = False

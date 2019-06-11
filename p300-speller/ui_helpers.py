@@ -96,8 +96,8 @@ class SelectionRectangle ():
         self.color = color
         self.max_x = max_x
         self.max_y = max_y
-        self.remaining_rows = range (self.settings['general']['num_rows'])
-        self.remaining_cols = range (self.settings['general']['num_cols'])
+        self.remaining_rows = list (range (self.settings['general']['num_rows']))
+        self.remaining_cols = list (range (self.settings['general']['num_cols']))
         self.visible = True
 
     def get_index (self):
@@ -147,8 +147,8 @@ class SelectionRectangle ():
 
     def refill_available_rcs (self):
         """Refills the lists of available rows and columns with index values"""
-        self.remaining_rows = range (self.settings['general']['num_rows'])
-        self.remaining_cols = range (self.settings['general']['num_cols'])
+        self.remaining_rows = list (range (self.settings['general']['num_rows']))
+        self.remaining_cols = list (range (self.settings['general']['num_cols']))
 
     def select_rand_row (self):
         """Selects a row from the available_rows"""
