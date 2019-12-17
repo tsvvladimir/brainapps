@@ -1,3 +1,0 @@
-classifier.pickle filter=lfs diff=lfs merge=lfs -text
-pca.pickle filter=lfs diff=lfs merge=lfs -text
-scaler.pickle filter=lfs diff=lfs merge=lfs -text
