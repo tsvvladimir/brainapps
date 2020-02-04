@@ -1,0 +1,4 @@
+[submodule "timeflux_openbci"]
+	path = timeflux_openbci
+	url = https://github.com/timeflux/timeflux_openbci
+	branch = master
