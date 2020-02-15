@@ -2,3 +2,7 @@
 	path = timeflux_openbci
 	url = https://github.com/timeflux/timeflux_openbci
 	branch = master
+[submodule "mne-cpp"]
+	path = mne-cpp
+	url = https://github.com/mne-tools/mne-cpp
+	branch = master
