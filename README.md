@@ -14,6 +14,6 @@ Timeflux has a [plugin](https://github.com/timeflux/timeflux_openbci) which uses
 
 MNE Scan is a part of [MNE-CPP project](https://github.com/mne-tools/mne-cpp). It's an application to visualize offline and online data. There is BrainFlow plugin which allows users to acquire data from all BrainFlow supported devices.
 
-[Instruction to build BrainFlow plugin](https://mne-cpp.github.io/pages/development/brainflow.html)
+[Instructions to build BrainFlow plugin](https://mne-cpp.github.io/pages/development/brainflow.html)
 
 ![MNE-Scan](https://live.staticflickr.com/65535/49535986728_70c0e09497_b.jpg)
