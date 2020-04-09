@@ -8,7 +8,7 @@ Timeflux is a free and open-source framework for the acquisition and real-time p
 
 Timeflux has a [plugin](https://github.com/timeflux/timeflux_brainflow) which uses BrainFlow API to get data from boards.
 
-![Timeflux](https://live.staticflickr.com/65535/49536713732_bc8726f1b6_b.jpg)
+![Timeflux](https://live.staticflickr.com/65535/49688678392_2ae04986d8.jpg)
 
 ## [MNE Scan](https://www.mne-cpp.org/index.php/category/development/mne-scan/)
 
@@ -16,4 +16,4 @@ MNE Scan is a part of [MNE-CPP project](https://github.com/mne-tools/mne-cpp). I
 
 [Instruction to build BrainFlow plugin](https://mne-cpp.github.io/pages/development/brainflow.html)
 
-![MNE-Scan](https://live.staticflickr.com/65535/49535986728_70c0e09497_b.jpg)
+![MNE-Scan](https://live.staticflickr.com/65535/49687876918_9703569326.jpg)
