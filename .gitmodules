@@ -1,7 +1,3 @@
-[submodule "mne-cpp"]
-	path = mne-cpp
-	url = https://github.com/mne-tools/mne-cpp
-	branch = master
 [submodule "timeflux_brainflow"]
 	path = timeflux_brainflow
 	url = https://github.com/timeflux/timeflux_brainflow
